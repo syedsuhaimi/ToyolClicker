@@ -2,25 +2,37 @@ package com.example.toyolclicker
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.content.res.ColorStateList
+import android.graphics.Color
 import android.graphics.Path
+import android.graphics.PixelFormat
 import android.util.Log
+import android.view.Gravity
+import android.view.LayoutInflater
+import android.view.MotionEvent
+import android.view.View
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.widget.Button
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import java.util.regex.Pattern
+import kotlin.math.abs
 
 class ToyolClickerService : AccessibilityService() {
 
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var searchJob: Job? = null
+    private var floatingView: View? = null
+    private lateinit var windowManager: WindowManager
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (!ToyolClickerState.isServiceRunning.value) return
@@ -89,7 +101,7 @@ class ToyolClickerService : AccessibilityService() {
         val fromKliaMatch = settings.fromKlia && nodeText.contains("KLIA", ignoreCase = true)
 
         val priceMatch = if (settings.manualPriceEnabled) {
-            val jobPrice = extractPrice(nodeText)
+            val jobPrice = extractPrice(text = nodeText)
             val targetPrice = settings.manualPrice.toDoubleOrNull()
             jobPrice != null && targetPrice != null && jobPrice >= targetPrice
         } else {
@@ -125,11 +137,9 @@ class ToyolClickerService : AccessibilityService() {
     }
 
     private fun extractTime(text: String): Int? {
-        // Corrected Regex with proper escaping for Kotlin String
         val pattern = Pattern.compile("(\\d{1,2}):\\d{2} (AM|PM)")
         val matcher = pattern.matcher(text)
         if (matcher.find()) {
-            // Group 1: hour, Group 2: AM/PM
             var hour = matcher.group(1)?.toIntOrNull() ?: return null
             val amPm = matcher.group(2)
             if (amPm.equals("PM", ignoreCase = true) && hour < 12) {
@@ -144,7 +154,6 @@ class ToyolClickerService : AccessibilityService() {
     }
 
     private fun extractPrice(text: String): Double? {
-        // Corrected Regex with proper escaping for Kotlin String
         val pattern = Pattern.compile("RM(\\d+\\.\\d{2})")
         val matcher = pattern.matcher(text)
         return if (matcher.find()) {
@@ -178,29 +187,107 @@ class ToyolClickerService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         Log.d("ToyolClickerService", "Service connected.")
+        windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+        showFloatingButton()
 
         ToyolClickerState.isServiceRunning
             .onEach { isRunning ->
                 searchJob?.cancel()
+
+                val button = floatingView?.findViewById<Button>(R.id.floating_button)
                 if (isRunning) {
+                    button?.text = "Stop"
+                    button?.backgroundTintList = ColorStateList.valueOf(Color.GREEN)
+
                     Log.d("ToyolClickerService", "Starting job search loop...")
                     searchJob = serviceScope.launch {
                         while (true) {
                             val interval = ToyolClickerState.settings.value.refreshInterval.toLongOrNull() ?: 1000L
-                            performSwipe()
+                            rootInActiveWindow?.let { root ->
+                                val plannerNode = findNodeByText(root, "Booking Planner")
+                                if (plannerNode != null) {
+                                    Log.d("ToyolClickerService", "On Booking Planner, performing swipe refresh.")
+                                    performSwipe()
+                                } else {
+                                    Log.d("ToyolClickerService", "Not on Booking Planner, skipping swipe.")
+                                }
+                            }
                             delay(interval)
                         }
                     }
                 } else {
+                    button?.text = "Start"
+                    button?.backgroundTintList = ColorStateList.valueOf(Color.RED)
                     Log.d("ToyolClickerService", "Stopping job search loop.")
                 }
             }
             .launchIn(serviceScope)
     }
 
+    private fun showFloatingButton() {
+        floatingView = LayoutInflater.from(this).inflate(R.layout.floating_layout, null)
+
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            PixelFormat.TRANSLUCENT
+        )
+
+        params.gravity = Gravity.TOP or Gravity.START
+        params.x = 0
+        params.y = 100
+
+        windowManager.addView(floatingView, params)
+
+        floatingView?.setOnTouchListener(object : View.OnTouchListener {
+            private var initialX: Int = 0
+            private var initialY: Int = 0
+            private var initialTouchX: Float = 0f
+            private var initialTouchY: Float = 0f
+            private var isADrag: Boolean = false
+            private val CLICK_DRAG_TOLERANCE = 10f
+
+            override fun onTouch(v: View, event: MotionEvent): Boolean {
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        isADrag = false
+                        initialX = params.x
+                        initialY = params.y
+                        initialTouchX = event.rawX
+                        initialTouchY = event.rawY
+                        return true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        val xDiff = event.rawX - initialTouchX
+                        val yDiff = event.rawY - initialTouchY
+                        if (!isADrag && (abs(xDiff) > CLICK_DRAG_TOLERANCE || abs(yDiff) > CLICK_DRAG_TOLERANCE)) {
+                            isADrag = true
+                        }
+                        if (isADrag) {
+                            params.x = initialX + xDiff.toInt()
+                            params.y = initialY + yDiff.toInt()
+                            windowManager.updateViewLayout(floatingView, params)
+                        }
+                        return true
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        if (!isADrag) {
+                            ToyolClickerState.toggleServiceStatus()
+                        }
+                        return true
+                    }
+                }
+                return false
+            }
+        })
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         serviceScope.cancel()
+        floatingView?.let { windowManager.removeView(it) }
         Log.d("ToyolClickerService", "Service destroyed.")
     }
 }

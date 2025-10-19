@@ -15,6 +15,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.Placeable
 import androidx.compose.ui.platform.LocalContext
@@ -38,7 +39,6 @@ class MainActivity : ComponentActivity() {
                         state = state,
                         onEvent = {
                             when (it) {
-                                is SettingsEvent.OnServiceRunningChange -> viewModel.onServiceRunningChange(it.isRunning)
                                 is SettingsEvent.OnServiceTypeChange -> viewModel.onServiceTypeChange(it.type, it.isChecked)
                                 is SettingsEvent.OnToKliaChange -> viewModel.onToKliaChange(it.isChecked)
                                 is SettingsEvent.OnFromKliaChange -> viewModel.onFromKliaChange(it.isChecked)
@@ -58,7 +58,6 @@ class MainActivity : ComponentActivity() {
 
 // Sealed interface for UI events
 sealed interface SettingsEvent {
-    data class OnServiceRunningChange(val isRunning: Boolean) : SettingsEvent
     data class OnServiceTypeChange(val type: String, val isChecked: Boolean) : SettingsEvent
     data class OnToKliaChange(val isChecked: Boolean) : SettingsEvent
     data class OnFromKliaChange(val isChecked: Boolean) : SettingsEvent
@@ -92,38 +91,21 @@ fun SettingsScreen(
         }) {
             Text("Enable Accessibility Service")
         }
-        Button(onClick = {
-            val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
-            context.startActivity(intent)
-        }) {
-            Text("Enable Floating Button")
-        }
-
-        HorizontalDivider()
-
-        // Main Start/Stop Button
-        Button(
-            onClick = { onEvent(SettingsEvent.OnServiceRunningChange(!state.isServiceRunning)) },
-            modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = if (state.isServiceRunning) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
-            )
-        ) {
-            Text(if (state.isServiceRunning) "Stop Service" else "Start Service")
-        }
 
         HorizontalDivider()
 
         // Service Type
         Text("Service Type", style = MaterialTheme.typography.titleMedium)
-        state.serviceTypes.keys.forEach { type ->
-            val isChecked = state.serviceTypes[type] ?: false
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(
-                    checked = isChecked,
-                    onCheckedChange = { onEvent(SettingsEvent.OnServiceTypeChange(type, it)) }
-                )
-                Text(type, modifier = Modifier.padding(start = 8.dp))
+        FlowRow(maxItemsInEachRow = 2) {
+            state.serviceTypes.keys.forEach { type ->
+                val isChecked = state.serviceTypes[type] ?: false
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(
+                        checked = isChecked,
+                        onCheckedChange = { onEvent(SettingsEvent.OnServiceTypeChange(type, it)) }
+                    )
+                    Text(type, modifier = Modifier.padding(start = 8.dp))
+                }
             }
         }
 

@@ -39,12 +39,6 @@ class SettingsViewModel : ViewModel() {
         }.launchIn(viewModelScope)
     }
 
-    fun onServiceRunningChange(isRunning: Boolean) {
-        _state.update { it.copy(isServiceRunning = isRunning) }
-        // Also update the shared state for the service to observe.
-        ToyolClickerState.isServiceRunning.value = isRunning
-    }
-
     fun onServiceTypeChange(type: String, isChecked: Boolean) {
         _state.update { currentState ->
             val updatedTypes = currentState.serviceTypes.toMutableMap()

@@ -8,4 +8,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 object ToyolClickerState {
     val isServiceRunning = MutableStateFlow(false)
     val settings = MutableStateFlow(SettingsState())
+
+    fun toggleServiceStatus() {
+        isServiceRunning.value = !isServiceRunning.value
+    }
 }
