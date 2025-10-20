@@ -137,7 +137,7 @@ class ToyolClickerService : AccessibilityService() {
     }
 
     private fun extractTime(text: String): Int? {
-        val pattern = Pattern.compile("(\\d{1,2}):\\d{2} (AM|PM)")
+        val pattern = Pattern.compile("""(\d{1,2}):\d{2} (AM|PM)""")
         val matcher = pattern.matcher(text)
         if (matcher.find()) {
             var hour = matcher.group(1)?.toIntOrNull() ?: return null
@@ -154,7 +154,7 @@ class ToyolClickerService : AccessibilityService() {
     }
 
     private fun extractPrice(text: String): Double? {
-        val pattern = Pattern.compile("RM(\\d+\\.\\d{2})")
+        val pattern = Pattern.compile("""RM(\d+\.\d{2})""")
         val matcher = pattern.matcher(text)
         return if (matcher.find()) {
             matcher.group(1)?.toDoubleOrNull()
@@ -250,6 +250,10 @@ class ToyolClickerService : AccessibilityService() {
             private val CLICK_DRAG_TOLERANCE = 10f
 
             override fun onTouch(v: View, event: MotionEvent): Boolean {
+                // It's possible for touch events to be dispatched after the view is detached.
+                if (!v.isAttachedToWindow) {
+                    return false
+                }
                 when (event.action) {
                     MotionEvent.ACTION_DOWN -> {
                         isADrag = false
@@ -268,7 +272,8 @@ class ToyolClickerService : AccessibilityService() {
                         if (isADrag) {
                             params.x = initialX + xDiff.toInt()
                             params.y = initialY + yDiff.toInt()
-                            windowManager.updateViewLayout(floatingView, params)
+                            // Safely update layout by checking if the view is still attached.
+                            windowManager.updateViewLayout(v, params)
                         }
                         return true
                     }
@@ -287,7 +292,13 @@ class ToyolClickerService : AccessibilityService() {
     override fun onDestroy() {
         super.onDestroy()
         serviceScope.cancel()
-        floatingView?.let { windowManager.removeView(it) }
+        // Safely remove the view and nullify the reference to prevent leaks and crashes.
+        floatingView?.let {
+            if (it.isAttachedToWindow) {
+                windowManager.removeView(it)
+            }
+        }
+        floatingView = null
         Log.d("ToyolClickerService", "Service destroyed.")
     }
 }
