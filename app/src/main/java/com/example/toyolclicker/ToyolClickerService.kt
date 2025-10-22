@@ -6,6 +6,7 @@ import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Path
 import android.graphics.PixelFormat
+import android.media.RingtoneManager
 import android.util.Log
 import android.view.Gravity
 import android.view.LayoutInflater
@@ -47,6 +48,15 @@ class ToyolClickerService : AccessibilityService() {
 
     private fun findAndProcessJobs(rootNode: AccessibilityNodeInfo) {
         // Check for specific pop-ups first and act on them
+        findNodeByText(rootNode, "Booking is confirmed!")?.let {
+            Log.d("ToyolClickerService", "'Booking is confirmed!' found. Stopping service and closing pop-up.")
+            playNotificationSound()
+            ToyolClickerState.toggleServiceStatus() // Stop the service
+            findNodeByText(rootNode, "Close")?.let { closeButton ->
+                performClick(closeButton)
+            }
+            return
+        }
         findNodeByText(rootNode, "Accept")?.let { 
             Log.d("ToyolClickerService", "'Accept' button found. Clicking it.")
             performClick(it)
@@ -59,6 +69,11 @@ class ToyolClickerService : AccessibilityService() {
         }
         findNodeByText(rootNode, "Slots are fully reserved")?.let { 
             Log.d("ToyolClickerService", "'Slots are fully reserved' found. Going back.")
+            performGlobalAction(GLOBAL_ACTION_BACK)
+            return
+        }
+        findNodeByText(rootNode, "Request timed out")?.let {
+            Log.d("ToyolClickerService", "'Request timed out' found. Going back.")
             performGlobalAction(GLOBAL_ACTION_BACK)
             return
         }
@@ -136,8 +151,18 @@ class ToyolClickerService : AccessibilityService() {
         Log.d("ToyolClickerService", "Performed swipe refresh.")
     }
 
+    private fun playNotificationSound() {
+        try {
+            val notification = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+            val r = RingtoneManager.getRingtone(applicationContext, notification)
+            r.play()
+        } catch (e: Exception) {
+            Log.e("ToyolClickerService", "Error playing notification sound", e)
+        }
+    }
+
     private fun extractTime(text: String): Int? {
-        val pattern = Pattern.compile("""(\d{1,2}):\d{2} (AM|PM)""")
+        val pattern = Pattern.compile("(\\d{1,2}):\\d{2} (AM|PM)")
         val matcher = pattern.matcher(text)
         if (matcher.find()) {
             var hour = matcher.group(1)?.toIntOrNull() ?: return null
@@ -154,7 +179,7 @@ class ToyolClickerService : AccessibilityService() {
     }
 
     private fun extractPrice(text: String): Double? {
-        val pattern = Pattern.compile("""RM(\d+\.\d{2})""")
+        val pattern = Pattern.compile("RM(\\d+\\.\\d{2})")
         val matcher = pattern.matcher(text)
         return if (matcher.find()) {
             matcher.group(1)?.toDoubleOrNull()
