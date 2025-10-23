@@ -15,7 +15,7 @@ import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
-import android.widget.Button // Pastikan import ini betul, bukan dari androidx.compose
+import android.widget.Button
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -29,13 +29,11 @@ import kotlin.math.abs
 
 class ToyolClickerService : AccessibilityService() {
 
-    // Scope untuk Coroutine yang berjalan di Main Thread
     private val mainScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var searchJob: Job? = null
     private var floatingView: View? = null
     private lateinit var windowManager: WindowManager
 
-    // Pembolehubah untuk logik seret butang (drag)
     private var initialX: Int = 0
     private var initialY: Int = 0
     private var initialTouchX: Float = 0f
@@ -47,7 +45,6 @@ class ToyolClickerService : AccessibilityService() {
         if (!ToyolClickerState.isServiceRunning.value) return
 
         if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
-            // PERBAIKAN ISU A: Jalankan pada Main thread untuk interaksi UI yang selamat.
             mainScope.launch {
                 rootInActiveWindow?.let { root ->
                     try {
@@ -61,6 +58,7 @@ class ToyolClickerService : AccessibilityService() {
     }
 
     private fun findAndProcessJobs(rootNode: AccessibilityNodeInfo) {
+        // Keutamaan 1: Semak jika job sudah berjaya sepenuhnya
         findNodeByText(rootNode, "Booking is confirmed!")?.let {
             Log.d("ToyolClickerService", "'Booking is confirmed!' found. Stopping service and closing pop-up.")
             playNotificationSound()
@@ -68,11 +66,26 @@ class ToyolClickerService : AccessibilityService() {
             findNodeByText(rootNode, "Close")?.let { closeButton -> performClick(closeButton) }
             return
         }
+
+        // == PERUBAHAN DI SINI: Tambah dan aktifkan carian untuk "Confirm" ==
+        // Keutamaan 2: Tindakan pengesahan terakhir
+        findNodeByText(rootNode, "Confirm")?.let {
+            Log.d("ToyolClickerService", "'Confirm' button found. Clicking it.")
+            performClick(it)
+            return // Berhenti selepas klik Confirm, kerana ini adalah tindakan terakhir dalam aliran.
+        }
+        // =================================================================
+
+        // Keutamaan 3: Tindakan menerima job
         findNodeByText(rootNode, "Accept")?.let {
             Log.d("ToyolClickerService", "'Accept' button found. Clicking it.")
             performClick(it)
+            // Selepas klik Accept, skrin akan berubah untuk memaparkan 'Confirm'.
+            // Fungsi ini akan dicetuskan semula oleh onAccessibilityEvent untuk skrin baru itu.
             return
         }
+
+        // Keutamaan 4: Kendalikan mesej ralat atau status
         findNodeByText(rootNode, "Slots are fully reserved")?.let {
             Log.d("ToyolClickerService", "'Slots are fully reserved' found. Going back.")
             performGlobalAction(GLOBAL_ACTION_BACK)
@@ -84,8 +97,9 @@ class ToyolClickerService : AccessibilityService() {
             return
         }
 
+        // Keutamaan 5: Jika tiada pop-up atau tindakan di atas, cari job baru di skrin utama
         val plannerNode = findNodeByText(rootNode, "Booking Planner")
-        if (plannerNode == null) return
+        if (plannerNode == null) return // Bukan di skrin utama, abaikan
 
         val jobNodes = rootNode.findAccessibilityNodeInfosByViewId("com.grab.passenger:id/container")
         if (jobNodes.isEmpty()) return
@@ -96,10 +110,12 @@ class ToyolClickerService : AccessibilityService() {
             if (isJobMatch(nodeText, settings)) {
                 Log.w("ToyolClickerService", "MATCH FOUND! Clicking job: $nodeText")
                 performClick(node)
-                return
+                return // Berhenti selepas klik job pertama yang sepadan
             }
         }
     }
+
+    // ... (Tiada perubahan pada fungsi-fungsi lain: isJobMatch, performClick, performSwipe, dll.)
 
     private fun isJobMatch(nodeText: String, settings: SettingsState): Boolean {
         val selectedServiceTypes = settings.serviceTypes.filter { it.value }.keys
@@ -217,7 +233,6 @@ class ToyolClickerService : AccessibilityService() {
                     button?.backgroundTintList = ColorStateList.valueOf(Color.RED)
                     Log.d("ToyolClickerService", "Starting job search loop...")
 
-                    // PERBAIKAN ISU A & B: Jalankan pada Main thread & dapatkan nod segar
                     searchJob = mainScope.launch {
                         while (true) {
                             val interval = ToyolClickerState.settings.value.refreshInterval.toLongOrNull() ?: 1000L
@@ -263,13 +278,12 @@ class ToyolClickerService : AccessibilityService() {
         params.y = 100
         windowManager.addView(floatingView, params)
 
-        val button = floatingView?.findViewById<Button>(R.id.floating_button) // Jenis Button yang betul
+        val button = floatingView?.findViewById<Button>(R.id.floating_button)
 
         button?.setOnClickListener {
             ToyolClickerState.toggleServiceStatus()
         }
 
-        // PERBAIKAN GARISAN KUNING: Guna sintaks lambda
         button?.setOnTouchListener { v, event ->
             if (floatingView?.isAttachedToWindow != true) {
                 return@setOnTouchListener false
@@ -297,11 +311,11 @@ class ToyolClickerService : AccessibilityService() {
                 }
                 MotionEvent.ACTION_UP -> {
                     if (!isADrag) {
-                        v.performClick() // Sekarang akan merujuk kepada View.performClick() yang betul
+                        v.performClick()
                     }
                 }
             }
-            true // `setOnTouchListener` memerlukan nilai Boolean dikembalikan
+            true
         }
     }
 
