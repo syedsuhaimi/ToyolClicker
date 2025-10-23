@@ -30,7 +30,8 @@ import kotlin.math.abs
 
 class ToyolClickerService : AccessibilityService() {
 
-    private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    // Scope for UI-related coroutines
+    private val mainScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var searchJob: Job? = null
     private var floatingView: View? = null
     private lateinit var windowManager: WindowManager
@@ -39,9 +40,12 @@ class ToyolClickerService : AccessibilityService() {
         if (!ToyolClickerState.isServiceRunning.value) return
 
         if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
-            rootInActiveWindow?.let {
-                findAndProcessJobs(it)
-                // DO NOT recycle the root node. The system manages its lifecycle.
+            // Launch heavy screen processing on a background thread
+            mainScope.launch(Dispatchers.Default) {
+                rootInActiveWindow?.let {
+                    findAndProcessJobs(it)
+                    // DO NOT recycle the root node. The system manages its lifecycle.
+                }
             }
         }
     }
@@ -62,11 +66,12 @@ class ToyolClickerService : AccessibilityService() {
             performClick(it)
             return
         }
-        findNodeByText(rootNode, "Confirm")?.let { 
-            Log.d("ToyolClickerService", "'Confirm' button found. Clicking it.")
-            performClick(it)
-            return
-        }
+        // Temporarily disabled for testing
+//        findNodeByText(rootNode, "Confirm")?.let { 
+//            Log.d("ToyolClickerService", "'Confirm' button found. Clicking it.")
+//            performClick(it)
+//            return
+//        }
         findNodeByText(rootNode, "Slots are fully reserved")?.let { 
             Log.d("ToyolClickerService", "'Slots are fully reserved' found. Going back.")
             performGlobalAction(GLOBAL_ACTION_BACK)
@@ -179,7 +184,7 @@ class ToyolClickerService : AccessibilityService() {
     }
 
     private fun extractPrice(text: String): Double? {
-        val pattern = Pattern.compile("RM(\\d+\\.\\d{2})")
+        val pattern = Pattern.compile("RM(\\d+\\.d{2})")
         val matcher = pattern.matcher(text)
         return if (matcher.find()) {
             matcher.group(1)?.toDoubleOrNull()
@@ -217,15 +222,17 @@ class ToyolClickerService : AccessibilityService() {
 
         ToyolClickerState.isServiceRunning
             .onEach { isRunning ->
-                searchJob?.cancel()
+                searchJob?.cancel() // Cancel any existing search job
 
+                // Update UI on the main thread
                 val button = floatingView?.findViewById<Button>(R.id.floating_button)
                 if (isRunning) {
                     button?.text = "Stop"
-                    button?.backgroundTintList = ColorStateList.valueOf(Color.GREEN)
+                    button?.backgroundTintList = ColorStateList.valueOf(Color.RED)
 
                     Log.d("ToyolClickerService", "Starting job search loop...")
-                    searchJob = serviceScope.launch {
+                    // Launch the heavy processing loop on a background thread
+                    searchJob = mainScope.launch(Dispatchers.Default) {
                         while (true) {
                             val interval = ToyolClickerState.settings.value.refreshInterval.toLongOrNull() ?: 1000L
                             rootInActiveWindow?.let { root ->
@@ -242,11 +249,11 @@ class ToyolClickerService : AccessibilityService() {
                     }
                 } else {
                     button?.text = "Start"
-                    button?.backgroundTintList = ColorStateList.valueOf(Color.RED)
+                    button?.backgroundTintList = ColorStateList.valueOf(Color.GREEN)
                     Log.d("ToyolClickerService", "Stopping job search loop.")
                 }
             }
-            .launchIn(serviceScope)
+            .launchIn(mainScope)
     }
 
     private fun showFloatingButton() {
@@ -256,7 +263,7 @@ class ToyolClickerService : AccessibilityService() {
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL, // Correct flags
             PixelFormat.TRANSLUCENT
         )
 
@@ -266,7 +273,9 @@ class ToyolClickerService : AccessibilityService() {
 
         windowManager.addView(floatingView, params)
 
-        floatingView?.setOnTouchListener(object : View.OnTouchListener {
+        val button = floatingView?.findViewById<Button>(R.id.floating_button)
+
+        button?.setOnTouchListener(object : View.OnTouchListener {
             private var initialX: Int = 0
             private var initialY: Int = 0
             private var initialTouchX: Float = 0f
@@ -275,10 +284,8 @@ class ToyolClickerService : AccessibilityService() {
             private val CLICK_DRAG_TOLERANCE = 10f
 
             override fun onTouch(v: View, event: MotionEvent): Boolean {
-                // It's possible for touch events to be dispatched after the view is detached.
-                if (!v.isAttachedToWindow) {
-                    return false
-                }
+                if (floatingView?.isAttachedToWindow != true) return false
+
                 when (event.action) {
                     MotionEvent.ACTION_DOWN -> {
                         isADrag = false
@@ -297,14 +304,13 @@ class ToyolClickerService : AccessibilityService() {
                         if (isADrag) {
                             params.x = initialX + xDiff.toInt()
                             params.y = initialY + yDiff.toInt()
-                            // Safely update layout by checking if the view is still attached.
-                            windowManager.updateViewLayout(v, params)
+                            windowManager.updateViewLayout(floatingView, params)
                         }
                         return true
                     }
                     MotionEvent.ACTION_UP -> {
                         if (!isADrag) {
-                            ToyolClickerState.toggleServiceStatus()
+                            v.performClick()
                         }
                         return true
                     }
@@ -312,12 +318,16 @@ class ToyolClickerService : AccessibilityService() {
                 return false
             }
         })
+
+        button?.setOnClickListener {
+            ToyolClickerState.toggleServiceStatus()
+        }
     }
+
 
     override fun onDestroy() {
         super.onDestroy()
-        serviceScope.cancel()
-        // Safely remove the view and nullify the reference to prevent leaks and crashes.
+        mainScope.cancel()
         floatingView?.let {
             if (it.isAttachedToWindow) {
                 windowManager.removeView(it)

@@ -5,8 +5,8 @@
 
     <Button
         android:id="@+id/floating_button"
-        android:layout_width="60dp"
-        android:layout_height="60dp"
-        android:text="GO" />
+        android:layout_width="80dp"
+        android:layout_height="80dp"
+        android:text="Start" />
 
 </FrameLayout>

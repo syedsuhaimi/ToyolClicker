@@ -96,7 +96,7 @@ fun SettingsScreen(
 
         // Service Type
         Text("Service Type", style = MaterialTheme.typography.titleMedium)
-        FlowRow(maxItemsInEachRow = 2) {
+        FlowRow(maxItemsInEachRow = 3) {
             state.serviceTypes.keys.forEach { type ->
                 val isChecked = state.serviceTypes[type] ?: false
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -113,32 +113,34 @@ fun SettingsScreen(
 
         // Job Type
         Text("Job Type", style = MaterialTheme.typography.titleMedium)
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Checkbox(
-                checked = state.toKlia,
-                onCheckedChange = { onEvent(SettingsEvent.OnToKliaChange(it)) }
-            )
-            Text("To KLIA", modifier = Modifier.padding(start = 8.dp))
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Checkbox(
-                checked = state.fromKlia,
-                onCheckedChange = { onEvent(SettingsEvent.OnFromKliaChange(it)) }
-            )
-            Text("From KLIA", modifier = Modifier.padding(start = 8.dp))
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Checkbox(
-                checked = state.manualPriceEnabled,
-                onCheckedChange = { onEvent(SettingsEvent.OnManualPriceEnabledChange(it)) }
-            )
-            OutlinedTextField(
-                value = state.manualPrice,
-                onValueChange = { onEvent(SettingsEvent.OnManualPriceChange(it)) },
-                label = { Text("Harga Manual (e.g. 50)") },
-                modifier = Modifier.padding(start = 8.dp),
-                enabled = state.manualPriceEnabled
-            )
+        FlowRow(maxItemsInEachRow = 2) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(
+                    checked = state.toKlia,
+                    onCheckedChange = { onEvent(SettingsEvent.OnToKliaChange(it)) }
+                )
+                Text("To KLIA", modifier = Modifier.padding(start = 8.dp))
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(
+                    checked = state.fromKlia,
+                    onCheckedChange = { onEvent(SettingsEvent.OnFromKliaChange(it)) }
+                )
+                Text("From KLIA", modifier = Modifier.padding(start = 8.dp))
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(
+                    checked = state.manualPriceEnabled,
+                    onCheckedChange = { onEvent(SettingsEvent.OnManualPriceEnabledChange(it)) }
+                )
+                OutlinedTextField(
+                    value = state.manualPrice,
+                    onValueChange = { onEvent(SettingsEvent.OnManualPriceChange(it)) },
+                    label = { Text("Harga Manual (e.g. 50)") },
+                    modifier = Modifier.padding(start = 8.dp),
+                    enabled = state.manualPriceEnabled
+                )
+            }
         }
 
         HorizontalDivider()
