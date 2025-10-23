@@ -39,6 +39,11 @@ android {
     buildFeatures {
         compose = true
     }
+    packaging {
+        jniLibs {
+            keepDebugSymbols.add("**/debug/*.so")
+        }
+    }
 }
 
 dependencies {
