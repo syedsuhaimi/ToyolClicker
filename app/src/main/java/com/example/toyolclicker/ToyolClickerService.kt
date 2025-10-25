@@ -16,6 +16,7 @@ import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Button
+import android.widget.Toast
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -33,6 +34,7 @@ class ToyolClickerService : AccessibilityService() {
     private var searchJob: Job? = null
     private var floatingView: View? = null
     private lateinit var windowManager: WindowManager
+    private var longPressJob: Job? = null
 
     private var initialX: Int = 0
     private var initialY: Int = 0
@@ -67,21 +69,25 @@ class ToyolClickerService : AccessibilityService() {
             return
         }
 
-        // == PERUBAHAN DI SINI: Tambah dan aktifkan carian untuk "Confirm" ==
         // Keutamaan 2: Tindakan pengesahan terakhir
         findNodeByText(rootNode, "Confirm")?.let {
             Log.d("ToyolClickerService", "'Confirm' button found. Clicking it.")
             performClick(it)
             return // Berhenti selepas klik Confirm, kerana ini adalah tindakan terakhir dalam aliran.
         }
-        // =================================================================
 
         // Keutamaan 3: Tindakan menerima job
         findNodeByText(rootNode, "Accept")?.let {
-            Log.d("ToyolClickerService", "'Accept' button found. Clicking it.")
+            Log.d("ToyolClickerService", "'Accept' button found. Clicking it for testing.")
             performClick(it)
-            // Selepas klik Accept, skrin akan berubah untuk memaparkan 'Confirm'.
-            // Fungsi ini akan dicetuskan semula oleh onAccessibilityEvent untuk skrin baru itu.
+
+            // -- PERUBAHAN UNTUK UJIAN --
+            // Berhenti serta-merta selepas klik 'Accept' untuk tujuan ujian.
+            Log.d("ToyolClickerService", "TEST MODE: Stopping service after clicking Accept.")
+            playNotificationSound()
+            ToyolClickerState.toggleServiceStatus()
+            // -- AKHIR PERUBAHAN --
+            
             return
         }
 
@@ -101,7 +107,7 @@ class ToyolClickerService : AccessibilityService() {
         val plannerNode = findNodeByText(rootNode, "Booking Planner")
         if (plannerNode == null) return // Bukan di skrin utama, abaikan
 
-        val jobNodes = rootNode.findAccessibilityNodeInfosByViewId("com.grab.passenger:id/container")
+        val jobNodes = rootNode.findAccessibilityNodeInfosByViewId("com.grabtaxi.driver2:id/unified_item_layout")
         if (jobNodes.isEmpty()) return
 
         val settings = ToyolClickerState.settings.value
@@ -114,8 +120,6 @@ class ToyolClickerService : AccessibilityService() {
             }
         }
     }
-
-    // ... (Tiada perubahan pada fungsi-fungsi lain: isJobMatch, performClick, performSwipe, dll.)
 
     private fun isJobMatch(nodeText: String, settings: SettingsState): Boolean {
         val selectedServiceTypes = settings.serviceTypes.filter { it.value }.keys
@@ -235,7 +239,11 @@ class ToyolClickerService : AccessibilityService() {
 
                     searchJob = mainScope.launch {
                         while (true) {
-                            val interval = ToyolClickerState.settings.value.refreshInterval.toLongOrNull() ?: 1000L
+                            val baseInterval = ToyolClickerState.settings.value.refreshInterval.toLongOrNull() ?: 1000L
+                            val jitter = (baseInterval * 0.2).toLong() // Sisihan/getaran sebanyak 20%
+                            val randomInterval = if (jitter > 0) baseInterval - jitter + (0..jitter * 2).random() else baseInterval
+                            Log.d("ToyolClickerService", "Base interval: ${baseInterval}ms, Next refresh in: ${randomInterval}ms")
+
                             val currentRoot = rootInActiveWindow
                             if (currentRoot != null) {
                                 try {
@@ -252,7 +260,7 @@ class ToyolClickerService : AccessibilityService() {
                             } else {
                                 Log.w("ToyolClickerService", "Root window is null, cannot perform swipe.")
                             }
-                            delay(interval)
+                            delay(randomInterval)
                         }
                     }
                 } else {
@@ -296,12 +304,21 @@ class ToyolClickerService : AccessibilityService() {
                     initialY = params.y
                     initialTouchX = event.rawX
                     initialTouchY = event.rawY
+
+                    longPressJob?.cancel()
+                    longPressJob = mainScope.launch {
+                        delay(1000L) // 1-second delay for long press
+                        Log.d("ToyolClickerService", "Long press detected. Stopping service completely.")
+                        Toast.makeText(this@ToyolClickerService, "ToyolClicker service stopped.", Toast.LENGTH_SHORT).show()
+                        stopSelf()
+                    }
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val xDiff = event.rawX - initialTouchX
                     val yDiff = event.rawY - initialTouchY
-                    if (!isADrag && (abs(xDiff) > CLICK_DRAG_TOLERANCE || abs(yDiff) > CLICK_DRAG_TOLERANCE)) {
+                    if (abs(xDiff) > CLICK_DRAG_TOLERANCE || abs(yDiff) > CLICK_DRAG_TOLERANCE) {
                         isADrag = true
+                        longPressJob?.cancel() // It's a drag, not a long press
                     }
                     if (isADrag) {
                         params.x = initialX + xDiff.toInt()
@@ -310,9 +327,14 @@ class ToyolClickerService : AccessibilityService() {
                     }
                 }
                 MotionEvent.ACTION_UP -> {
+                    longPressJob?.cancel() // Cancel the long press job
                     if (!isADrag) {
+                        // If it wasn't a drag, it's a short click
                         v.performClick()
                     }
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    longPressJob?.cancel()
                 }
             }
             true
@@ -326,5 +348,6 @@ class ToyolClickerService : AccessibilityService() {
         }
         mainScope.cancel()
         searchJob?.cancel()
+        longPressJob?.cancel()
     }
 }
