@@ -74,7 +74,7 @@ class ToyolClickerService : AccessibilityService() {
     }
 
     private fun findAndProcessJobs(rootNode: AccessibilityNodeInfo) {
-        // Keutamaan 1: Semak jika job sudah berjaya sepenuhnya
+        // Priority 1: Check for successful booking
         findNodeByText(rootNode, "Booking is confirmed!")?.let {
             Log.d("ToyolClickerService", "'Booking is confirmed!' found. Stopping service and closing pop-up.")
             playNotificationSound()
@@ -83,23 +83,21 @@ class ToyolClickerService : AccessibilityService() {
             return
         }
 
-        // Keutamaan 2: Tindakan pengesahan terakhir
+        // Priority 2: Final confirmation action
         findNodeByText(rootNode, "Confirm")?.let {
             Log.d("ToyolClickerService", "'Confirm' button found. Clicking it.")
             performClick(it)
-            return // Berhenti selepas klik Confirm, kerana ini adalah tindakan terakhir dalam aliran.
-        }
-
-        // Keutamaan 3: Tindakan menerima job
-        findNodeByText(rootNode, "Accept")?.let {
-            Log.d("ToyolClickerService", "'Accept' button found. Clicking it.")
-            performClick(it)
-            // Selepas klik Accept, skrin akan berubah untuk memaparkan 'Confirm'.
-            // Fungsi ini akan dicetuskan semula oleh onAccessibilityEvent untuk skrin baru itu.
             return
         }
 
-        // Keutamaan 4: Kendalikan mesej ralat atau status
+        // Priority 3: Accept job action
+        findNodeByText(rootNode, "Accept")?.let {
+            Log.d("ToyolClickerService", "'Accept' button found. Clicking it.")
+            performClick(it)
+            return
+        }
+
+        // Priority 4: Handle error or status messages
         findNodeByText(rootNode, "Slots are fully reserved")?.let {
             Log.d("ToyolClickerService", "'Slots are fully reserved' found. Going back.")
             performGlobalAction(GLOBAL_ACTION_BACK)
@@ -111,9 +109,9 @@ class ToyolClickerService : AccessibilityService() {
             return
         }
 
-        // Keutamaan 5: Jika tiada pop-up atau tindakan di atas, cari job baru di skrin utama
+        // Priority 5: If no pop-ups, search for new jobs on the main screen
         val plannerNode = findNodeByText(rootNode, "Booking Planner")
-        if (plannerNode == null) return // Bukan di skrin utama, abaikan
+        if (plannerNode == null) return
 
         val jobNodes = rootNode.findAccessibilityNodeInfosByViewId("com.grabtaxi.driver2:id/unified_item_layout")
         if (jobNodes.isEmpty()) return
@@ -124,14 +122,16 @@ class ToyolClickerService : AccessibilityService() {
             if (isJobMatch(nodeText, settings)) {
                 Log.w("ToyolClickerService", "MATCH FOUND! Clicking job: $nodeText")
                 performClick(node)
-                return // Berhenti selepas klik job pertama yang sepadan
+                return // Stop after clicking the first matched job
             }
         }
     }
 
     private fun isJobMatch(nodeText: String, settings: SettingsState): Boolean {
-        val selectedServiceTypes = settings.serviceTypes.filter { it.value }.keys
-        if (selectedServiceTypes.isNotEmpty() && selectedServiceTypes.none { nodeText.contains(it, ignoreCase = true) }) {
+        val serviceType = settings.serviceTypes.keys.firstOrNull { nodeText.contains(it, ignoreCase = true) }
+            ?: return false
+
+        if (settings.serviceTypes[serviceType] != true) {
             return false
         }
 
@@ -143,18 +143,34 @@ class ToyolClickerService : AccessibilityService() {
             }
         }
 
-        val toKliaMatch = settings.toKlia && nodeText.contains("KLIA", ignoreCase = true)
-        val fromKliaMatch = settings.fromKlia && nodeText.contains("KLIA", ignoreCase = true)
+        val target = settings.jobTargets[serviceType]
 
-        val priceMatch = if (settings.manualPriceEnabled) {
-            val jobPrice = extractPrice(text = nodeText)
-            val targetPrice = settings.manualPrice.toDoubleOrNull()
+        if (target == null || !target.isEnabled) {
+            return true
+        }
+
+        if (target.distanceFilterEnabled && !target.fromKlia) {
+            val maxDistance = target.maxPickupDistance.toDoubleOrNull()
+            if (maxDistance != null) {
+                val jobDistance = extractDistance(nodeText)
+                if (jobDistance == null || jobDistance > maxDistance) {
+                    return false
+                }
+            }
+        }
+
+        val toKliaMatch = target.toKlia && nodeText.contains("KLIA", ignoreCase = true)
+        val fromKliaMatch = target.fromKlia && nodeText.contains("KLIA", ignoreCase = true)
+
+        val priceMatch = if (target.manualPriceEnabled) {
+            val jobPrice = extractPrice(nodeText)
+            val targetPrice = target.manualPrice.toDoubleOrNull()
             jobPrice != null && targetPrice != null && jobPrice >= targetPrice
         } else {
             false
         }
 
-        val criteriaSelected = settings.toKlia || settings.fromKlia || settings.manualPriceEnabled
+        val criteriaSelected = target.toKlia || target.fromKlia || target.manualPriceEnabled
         return if (criteriaSelected) toKliaMatch || fromKliaMatch || priceMatch else true
     }
 
@@ -187,7 +203,7 @@ class ToyolClickerService : AccessibilityService() {
     }
 
     private fun extractTime(text: String): Int? {
-        val regex = "(\\d{1,2}):\\d{2} (AM|PM)".toRegex()
+        val regex = "(\\d{1,2}):\\d{2}\\s?(AM|PM)".toRegex(RegexOption.IGNORE_CASE)
         val matchResult = regex.find(text)
         if (matchResult != null) {
             val (hourString, amPm) = matchResult.destructured
@@ -204,7 +220,13 @@ class ToyolClickerService : AccessibilityService() {
     }
 
     private fun extractPrice(text: String): Double? {
-        val regex = "RM(\\d+\\.\\d{2})".toRegex()
+        val regex = "RM(\\d+\\.?\\d*)".toRegex()
+        val matchResult = regex.find(text)
+        return matchResult?.destructured?.component1()?.toDoubleOrNull()
+    }
+
+    private fun extractDistance(text: String): Double? {
+        val regex = "(\\d+\\.?\\d*)\\s?Km from you".toRegex(RegexOption.IGNORE_CASE)
         val matchResult = regex.find(text)
         return matchResult?.destructured?.component1()?.toDoubleOrNull()
     }
