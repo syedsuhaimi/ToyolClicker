@@ -11,7 +11,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.toyolclicker"
+        applicationId = "com.example.toyolclicker.v2"
         minSdk = 35
         targetSdk = 36
         versionCode = 1
