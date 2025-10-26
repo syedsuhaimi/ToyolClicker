@@ -2,6 +2,10 @@ package com.example.toyolclicker
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Path
@@ -35,6 +39,7 @@ class ToyolClickerService : AccessibilityService() {
     private var floatingView: View? = null
     private lateinit var windowManager: WindowManager
     private var longPressJob: Job? = null
+    private var longPressHandled = false
 
     private var initialX: Int = 0
     private var initialY: Int = 0
@@ -42,6 +47,15 @@ class ToyolClickerService : AccessibilityService() {
     private var initialTouchY: Float = 0f
     private var isADrag: Boolean = false
     private val CLICK_DRAG_TOLERANCE = 10f
+
+    private val showButtonReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == "com.example.toyolclicker.SHOW_BUTTON") {
+                Log.d("ToyolClickerService", "Received broadcast to show button.")
+                showFloatingButton()
+            }
+        }
+    }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (!ToyolClickerState.isServiceRunning.value) return
@@ -78,16 +92,10 @@ class ToyolClickerService : AccessibilityService() {
 
         // Keutamaan 3: Tindakan menerima job
         findNodeByText(rootNode, "Accept")?.let {
-            Log.d("ToyolClickerService", "'Accept' button found. Clicking it for testing.")
+            Log.d("ToyolClickerService", "'Accept' button found. Clicking it.")
             performClick(it)
-
-            // -- PERUBAHAN UNTUK UJIAN --
-            // Berhenti serta-merta selepas klik 'Accept' untuk tujuan ujian.
-            Log.d("ToyolClickerService", "TEST MODE: Stopping service after clicking Accept.")
-            playNotificationSound()
-            ToyolClickerState.toggleServiceStatus()
-            // -- AKHIR PERUBAHAN --
-            
+            // Selepas klik Accept, skrin akan berubah untuk memaparkan 'Confirm'.
+            // Fungsi ini akan dicetuskan semula oleh onAccessibilityEvent untuk skrin baru itu.
             return
         }
 
@@ -225,6 +233,10 @@ class ToyolClickerService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         Log.d("ToyolClickerService", "Service connected.")
+
+        val filter = IntentFilter("com.example.toyolclicker.SHOW_BUTTON")
+        registerReceiver(showButtonReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         showFloatingButton()
 
@@ -239,28 +251,28 @@ class ToyolClickerService : AccessibilityService() {
 
                     searchJob = mainScope.launch {
                         while (true) {
-                            val baseInterval = ToyolClickerState.settings.value.refreshInterval.toLongOrNull() ?: 1000L
-                            val jitter = (baseInterval * 0.2).toLong() // Sisihan/getaran sebanyak 20%
-                            val randomInterval = if (jitter > 0) baseInterval - jitter + (0..jitter * 2).random() else baseInterval
-                            Log.d("ToyolClickerService", "Base interval: ${baseInterval}ms, Next refresh in: ${randomInterval}ms")
-
                             val currentRoot = rootInActiveWindow
-                            if (currentRoot != null) {
-                                try {
-                                    val plannerNode = findNodeByText(currentRoot, "Booking Planner")
-                                    if (plannerNode != null) {
-                                        Log.d("ToyolClickerService", "On Booking Planner, performing swipe refresh.")
-                                        performSwipe()
-                                    } else {
-                                        Log.d("ToyolClickerService", "Not on Booking Planner, skipping swipe.")
-                                    }
-                                } catch (e: IllegalStateException) {
-                                    Log.e("ToyolClickerService", "Error during swipe loop, node might be stale: ${e.message}")
+                            var delayDuration: Long
+
+                            if (currentRoot?.packageName == "com.grabtaxi.driver2") {
+                                val plannerNode = findNodeByText(currentRoot, "Booking Planner")
+                                if (plannerNode != null) {
+                                    Log.d("ToyolClickerService", "On Booking Planner, performing swipe refresh.")
+                                    performSwipe()
+
+                                    val baseInterval = ToyolClickerState.settings.value.refreshInterval.toLongOrNull() ?: 1000L
+                                    val jitter = (baseInterval * 0.2).toLong()
+                                    delayDuration = if (jitter > 0) baseInterval - jitter + (0..jitter * 2).random() else baseInterval
+                                    Log.d("ToyolClickerService", "Active mode. Next refresh in: ${delayDuration}ms")
+                                } else {
+                                    delayDuration = 5000L // Not on planner screen, idle mode
+                                    Log.d("ToyolClickerService", "In Grab, but not on planner. Idling for ${delayDuration}ms.")
                                 }
                             } else {
-                                Log.w("ToyolClickerService", "Root window is null, cannot perform swipe.")
+                                delayDuration = 10000L // Outside Grab app, deep idle mode
+                                Log.d("ToyolClickerService", "Outside Grab app. Deep idling for ${delayDuration}ms.")
                             }
-                            delay(randomInterval)
+                            delay(delayDuration)
                         }
                     }
                 } else {
@@ -273,6 +285,7 @@ class ToyolClickerService : AccessibilityService() {
     }
 
     private fun showFloatingButton() {
+        if (floatingView?.isAttachedToWindow == true) return // Don't show if already shown
         floatingView = LayoutInflater.from(this).inflate(R.layout.floating_layout, null)
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -288,10 +301,6 @@ class ToyolClickerService : AccessibilityService() {
 
         val button = floatingView?.findViewById<Button>(R.id.floating_button)
 
-        button?.setOnClickListener {
-            ToyolClickerState.toggleServiceStatus()
-        }
-
         button?.setOnTouchListener { v, event ->
             if (floatingView?.isAttachedToWindow != true) {
                 return@setOnTouchListener false
@@ -300,6 +309,7 @@ class ToyolClickerService : AccessibilityService() {
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
                     isADrag = false
+                    longPressHandled = false
                     initialX = params.x
                     initialY = params.y
                     initialTouchX = event.rawX
@@ -308,29 +318,36 @@ class ToyolClickerService : AccessibilityService() {
                     longPressJob?.cancel()
                     longPressJob = mainScope.launch {
                         delay(1000L) // 1-second delay for long press
-                        Log.d("ToyolClickerService", "Long press detected. Stopping service completely.")
-                        Toast.makeText(this@ToyolClickerService, "ToyolClicker service stopped.", Toast.LENGTH_SHORT).show()
-                        stopSelf()
+                        longPressHandled = true
+                        Log.d("ToyolClickerService", "Long press detected. Hiding button.")
+                        Toast.makeText(this@ToyolClickerService, "Floating button hidden.", Toast.LENGTH_SHORT).show()
+                        floatingView?.let {
+                            if (it.isAttachedToWindow) {
+                                windowManager.removeView(it)
+                            }
+                        }
+                        floatingView = null // Prevent reuse
                     }
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val xDiff = event.rawX - initialTouchX
                     val yDiff = event.rawY - initialTouchY
                     if (abs(xDiff) > CLICK_DRAG_TOLERANCE || abs(yDiff) > CLICK_DRAG_TOLERANCE) {
-                        isADrag = true
-                        longPressJob?.cancel() // It's a drag, not a long press
-                    }
-                    if (isADrag) {
+                        if (!isADrag) {
+                            isADrag = true
+                            longPressJob?.cancel() // It's a drag, cancel long press
+                        }
                         params.x = initialX + xDiff.toInt()
                         params.y = initialY + yDiff.toInt()
                         windowManager.updateViewLayout(floatingView, params)
                     }
                 }
                 MotionEvent.ACTION_UP -> {
-                    longPressJob?.cancel() // Cancel the long press job
-                    if (!isADrag) {
-                        // If it wasn't a drag, it's a short click
-                        v.performClick()
+                    longPressJob?.cancel() // Always cancel the timer on ACTION_UP
+                    if (!isADrag && !longPressHandled) {
+                        // It's a short click
+                        Log.d("ToyolClickerService", "Short click detected.")
+                        ToyolClickerState.toggleServiceStatus()
                     }
                 }
                 MotionEvent.ACTION_CANCEL -> {
@@ -343,6 +360,7 @@ class ToyolClickerService : AccessibilityService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        unregisterReceiver(showButtonReceiver)
         floatingView?.let {
             if (it.isAttachedToWindow) windowManager.removeView(it)
         }

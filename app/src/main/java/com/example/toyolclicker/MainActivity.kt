@@ -84,12 +84,24 @@ fun SettingsScreen(
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
 
-        // Permission Buttons
-        Button(onClick = {
-            val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-            context.startActivity(intent)
-        }) {
-            Text("Enable Accessibility Service")
+        // Permission and Control Buttons
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceAround
+        ) {
+            Button(onClick = {
+                val intent = Intent("com.example.toyolclicker.SHOW_BUTTON")
+                intent.setPackage(context.packageName) // Make the broadcast explicit
+                context.sendBroadcast(intent)
+            }) {
+                Text("Show Floating Button")
+            }
+            Button(onClick = {
+                val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                context.startActivity(intent)
+            }) {
+                Text("Accessibility Settings")
+            }
         }
 
         HorizontalDivider()
