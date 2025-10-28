@@ -41,6 +41,13 @@ class ToyolClickerService : AccessibilityService() {
     private var longPressJob: Job? = null
     private var longPressHandled = false
 
+    // (c) Short-term memory for the job to be verified
+    private var pendingJobToVerify: String? = null
+
+    // (d) Timeout mechanism variables
+    private var backToPlannerJob: Job? = null
+    private var forceRefreshOnNextPlannerView = false
+
     private var initialX: Int = 0
     private var initialY: Int = 0
     private var initialTouchX: Float = 0f
@@ -77,6 +84,7 @@ class ToyolClickerService : AccessibilityService() {
         // Priority 1: Check for successful booking
         findNodeByText(rootNode, "Booking is confirmed!")?.let {
             Log.d("ToyolClickerService", "'Booking is confirmed!' found. Stopping service and closing pop-up.")
+            pendingJobToVerify = null // Clear memory
             playNotificationSound()
             ToyolClickerState.toggleServiceStatus()
             findNodeByText(rootNode, "Close")?.let { closeButton -> performClick(closeButton) }
@@ -90,28 +98,42 @@ class ToyolClickerService : AccessibilityService() {
             return
         }
 
-        // Priority 3: Accept job action
-        findNodeByText(rootNode, "Accept")?.let {
-            Log.d("ToyolClickerService", "'Accept' button found. Clicking it.")
-            performClick(it)
+        // (c) New Priority 3: Verification on the Accept screen
+        val acceptButton = findNodeByText(rootNode, "Accept")
+        if (acceptButton != null && pendingJobToVerify != null) {
+            Log.d("ToyolClickerService", "On Accept screen, verifying job details...")
+            val currentPageText = getAllTextFromNode(rootNode).joinToString("\n")
+
+            if (isJobMatch(currentPageText, ToyolClickerState.settings.value)) {
+                Log.d("ToyolClickerService", "Verification SUCCESS. Clicking Accept.")
+                performClick(acceptButton)
+            } else {
+                Log.w("ToyolClickerService", "Verification FAILED. Job no longer matches. Going back.")
+                recoverToPlanner(isTimeout = false) // Go back without forcing refresh
+            }
+            pendingJobToVerify = null // Clear memory after action
             return
         }
 
         // Priority 4: Handle error or status messages
         findNodeByText(rootNode, "Slots are fully reserved")?.let {
             Log.d("ToyolClickerService", "'Slots are fully reserved' found. Going back.")
-            performGlobalAction(GLOBAL_ACTION_BACK)
+            pendingJobToVerify = null // Clear memory on error
+            recoverToPlanner(isTimeout = false)
             return
         }
         findNodeByText(rootNode, "Request timed out")?.let {
             Log.d("ToyolClickerService", "'Request timed out' found. Going back.")
-            performGlobalAction(GLOBAL_ACTION_BACK)
+            pendingJobToVerify = null // Clear memory on error
+            recoverToPlanner(isTimeout = false)
             return
         }
 
         // Priority 5: If no pop-ups, search for new jobs on the main screen
         val plannerNode = findNodeByText(rootNode, "Booking Planner")
         if (plannerNode == null) return
+
+        pendingJobToVerify = null
 
         val jobNodes = rootNode.findAccessibilityNodeInfosByViewId("com.grabtaxi.driver2:id/unified_item_layout")
         if (jobNodes.isEmpty()) return
@@ -120,7 +142,8 @@ class ToyolClickerService : AccessibilityService() {
         for (node in jobNodes) {
             val nodeText = getAllTextFromNode(node).joinToString("\n")
             if (isJobMatch(nodeText, settings)) {
-                Log.w("ToyolClickerService", "MATCH FOUND! Clicking job: $nodeText")
+                Log.w("ToyolClickerService", "MATCH FOUND! Storing job text and clicking: $nodeText")
+                pendingJobToVerify = nodeText // Store in memory
                 performClick(node)
                 return // Stop after clicking the first matched job
             }
@@ -128,6 +151,7 @@ class ToyolClickerService : AccessibilityService() {
     }
 
     private fun isJobMatch(nodeText: String, settings: SettingsState): Boolean {
+        // This is the V2 logic, which is more advanced and what we want to keep.
         val serviceType = settings.serviceTypes.keys.firstOrNull { nodeText.contains(it, ignoreCase = true) }
             ?: return false
 
@@ -159,8 +183,9 @@ class ToyolClickerService : AccessibilityService() {
             }
         }
 
-        val toKliaMatch = target.toKlia && nodeText.contains("KLIA", ignoreCase = true)
-        val fromKliaMatch = target.fromKlia && nodeText.contains("KLIA", ignoreCase = true)
+        // Merged logic: Use V2's target object with V1-fixed's specific string check
+        val toKliaMatch = target.toKlia && nodeText.contains("(To KLIA)", ignoreCase = true)
+        val fromKliaMatch = target.fromKlia && nodeText.contains("(From KLIA)", ignoreCase = true)
 
         val priceMatch = if (target.manualPriceEnabled) {
             val jobPrice = extractPrice(nodeText)
@@ -172,6 +197,34 @@ class ToyolClickerService : AccessibilityService() {
 
         val criteriaSelected = target.toKlia || target.fromKlia || target.manualPriceEnabled
         return if (criteriaSelected) toKliaMatch || fromKliaMatch || priceMatch else true
+    }
+    
+    private fun recoverToPlanner(isTimeout: Boolean) {
+        Log.w("ToyolClickerService", "Recovery needed! isTimeout: $isTimeout. Attempting to go back to planner.")
+        if(isTimeout) {
+            forceRefreshOnNextPlannerView = true
+        }
+        pendingJobToVerify = null // Clear any pending job
+
+        val rootNode = rootInActiveWindow ?: return
+
+        // Hierarchical recovery strategy
+        findNodeByText(rootNode, "Cancel")?.let {
+            Log.d("ToyolClickerService", "Recovery: Found 'Cancel', clicking it.")
+            performClick(it)
+            return
+        }
+        
+        rootNode.findAccessibilityNodeInfosByViewId("com.grabtaxi.driver2:id/jobs_toolbar_left_icon").firstOrNull()?.let {
+             if(it.contentDescription?.contains("Back", ignoreCase = true) == true) {
+                Log.d("ToyolClickerService", "Recovery: Found back button by ID and description, clicking it.")
+                performClick(it)
+                return
+             }
+        }
+
+        Log.d("ToyolClickerService", "Recovery: No specific button found, using global back action.")
+        performGlobalAction(GLOBAL_ACTION_BACK)
     }
 
     private fun performClick(node: AccessibilityNodeInfo) {
@@ -274,33 +327,48 @@ class ToyolClickerService : AccessibilityService() {
                     searchJob = mainScope.launch {
                         while (true) {
                             val currentRoot = rootInActiveWindow
-                            var delayDuration: Long
-
-                            if (currentRoot?.packageName == "com.grabtaxi.driver2") {
-                                val plannerNode = findNodeByText(currentRoot, "Booking Planner")
-                                if (plannerNode != null) {
-                                    Log.d("ToyolClickerService", "On Booking Planner, performing swipe refresh.")
-                                    performSwipe()
-
-                                    val baseInterval = ToyolClickerState.settings.value.refreshInterval.toLongOrNull() ?: 1000L
-                                    val jitter = (baseInterval * 0.2).toLong()
-                                    delayDuration = if (jitter > 0) baseInterval - jitter + (0..jitter * 2).random() else baseInterval
-                                    Log.d("ToyolClickerService", "Active mode. Next refresh in: ${delayDuration}ms")
-                                } else {
-                                    delayDuration = 5000L // Not on planner screen, idle mode
-                                    Log.d("ToyolClickerService", "In Grab, but not on planner. Idling for ${delayDuration}ms.")
-                                }
-                            } else {
-                                delayDuration = 10000L // Outside Grab app, deep idle mode
-                                Log.d("ToyolClickerService", "Outside Grab app. Deep idling for ${delayDuration}ms.")
+                            if (currentRoot == null) {
+                                delay(5000L) // Wait if screen is not available
+                                continue
                             }
-                            delay(delayDuration)
+
+                            val plannerNode = findNodeByText(currentRoot, "Booking Planner")
+                            if (plannerNode != null) {
+                                backToPlannerJob?.cancel() // We are on the right screen, cancel timeout
+                                if (forceRefreshOnNextPlannerView) {
+                                    Log.i("ToyolClickerService", "Forcing refresh after recovery.")
+                                    performSwipe()
+                                    forceRefreshOnNextPlannerView = false
+                                    delay(2000L) // Wait a bit after forced refresh
+                                    continue // Restart loop to get fresh nodes
+                                }
+                                
+                                Log.d("ToyolClickerService", "On Booking Planner, performing swipe refresh.")
+                                performSwipe()
+                                val baseInterval = ToyolClickerState.settings.value.refreshInterval.toLongOrNull() ?: 1000L
+                                val jitter = (baseInterval * 0.2).toLong()
+                                val delayDuration = if (jitter > 0) baseInterval - jitter + (0..jitter * 2).random() else baseInterval
+                                Log.d("ToyolClickerService", "Active mode. Next refresh in: ${delayDuration}ms")
+                                delay(delayDuration)
+
+                            } else {
+                                // Not on planner screen, start or continue the timeout
+                                if (backToPlannerJob == null || backToPlannerJob?.isCompleted == true) {
+                                    backToPlannerJob = mainScope.launch {
+                                        Log.w("ToyolClickerService", "Not on planner screen. Starting 5s timeout to recover.")
+                                        delay(5000L)
+                                        recoverToPlanner(isTimeout = true)
+                                    }
+                                }
+                                delay(2000L) // Check screen state every 2s while in timeout mode
+                            }
                         }
                     }
                 } else {
                     button?.text = "Start"
                     button?.backgroundTintList = ColorStateList.valueOf(Color.GREEN)
                     Log.d("ToyolClickerService", "Stopping job search loop.")
+                    backToPlannerJob?.cancel()
                 }
             }
             .launchIn(mainScope)
@@ -389,5 +457,6 @@ class ToyolClickerService : AccessibilityService() {
         mainScope.cancel()
         searchJob?.cancel()
         longPressJob?.cancel()
+        backToPlannerJob?.cancel()
     }
 }
