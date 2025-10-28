@@ -91,11 +91,13 @@ class ToyolClickerService : AccessibilityService() {
             return
         }
 
-        // Priority 2: Final confirmation action
-        findNodeByText(rootNode, "Confirm")?.let {
-            Log.d("ToyolClickerService", "'Confirm' button found. Clicking it.")
-            performClick(it)
-            return
+        // Priority 2: Final confirmation action - now smarter
+        rootNode.findAccessibilityNodeInfosByText("Confirm").forEach { node ->
+            if (node.isClickable) {
+                Log.d("ToyolClickerService", "Clickable 'Confirm' button found. Clicking it.")
+                performClick(node)
+                return@findAndProcessJobs // Exit the whole function after clicking
+            }
         }
 
         // (c) New Priority 3: Verification on the Accept screen
