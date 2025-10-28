@@ -2,7 +2,11 @@ package com.example.toyolclicker
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.accessibilityservice.GestureDescriptionimport
 import android.content.BroadcastReceiver
+import androidx.privacysandbox.tools.core.generator.build
+
+android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -198,7 +202,7 @@ class ToyolClickerService : AccessibilityService() {
         val criteriaSelected = target.toKlia || target.fromKlia || target.manualPriceEnabled
         return if (criteriaSelected) toKliaMatch || fromKliaMatch || priceMatch else true
     }
-    
+
     private fun recoverToPlanner(isTimeout: Boolean) {
         Log.w("ToyolClickerService", "Recovery needed! isTimeout: $isTimeout. Attempting to go back to planner.")
         if(isTimeout) {
@@ -214,13 +218,13 @@ class ToyolClickerService : AccessibilityService() {
             performClick(it)
             return
         }
-        
+
         rootNode.findAccessibilityNodeInfosByViewId("com.grabtaxi.driver2:id/jobs_toolbar_left_icon").firstOrNull()?.let {
-             if(it.contentDescription?.contains("Back", ignoreCase = true) == true) {
+            if(it.contentDescription?.contains("Back", ignoreCase = true) == true) {
                 Log.d("ToyolClickerService", "Recovery: Found back button by ID and description, clicking it.")
                 performClick(it)
                 return
-             }
+            }
         }
 
         Log.d("ToyolClickerService", "Recovery: No specific button found, using global back action.")
@@ -342,7 +346,7 @@ class ToyolClickerService : AccessibilityService() {
                                     delay(2000L) // Wait a bit after forced refresh
                                     continue // Restart loop to get fresh nodes
                                 }
-                                
+
                                 Log.d("ToyolClickerService", "On Booking Planner, performing swipe refresh.")
                                 performSwipe()
                                 val baseInterval = ToyolClickerState.settings.value.refreshInterval.toLongOrNull() ?: 1000L
